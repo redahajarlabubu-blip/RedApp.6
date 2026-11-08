@@ -760,7 +760,7 @@ function join(c, cid, kind) {
 async function enter(c, cid, kind, starter) {
  const r = R();
  stopRing();
- const st = call = { c, cid, kind, peers: new Map(), early: new Map(), local: null, muted: false, camOff: false, t0: Date.now(), facing: "user" };
+ const st = call = { c, cid, kind, peers: new Map(), early: new Map(), local: null, muted: false, camOff: false, sharing: false, cameraTrack: null, screenTrack: null, t0: Date.now(), facing: "user" };
  buildUI();
  try { st.local = await media(kind); }
  catch (e) {
@@ -886,6 +886,7 @@ function teardown(log) {
  call = null;
  clearInterval(st.hb); clearInterval(st.tick);
  st.peers.forEach(p => { try { p.pc.close(); } catch {} });
+ if (st.screenTrack) { st.screenTrack.onended = null; st.screenTrack.stop(); }
  if (st.local) st.local.getTracks().forEach(x => x.stop());
  if (ui) { ui.remove(); ui = null; }
  if (pill) { pill.remove(); pill = null; }
@@ -901,6 +902,44 @@ function toggleMic() {
  st.local.getAudioTracks().forEach(x => x.enabled = !st.muted);
  send(st.c, { t: "gcm", cid: st.cid, mic: st.muted ? 0 : 1, cam: st.camOff ? 0 : 1 });
  updateUI();
+}
+async function toggleScreenShare() {
+ const st = call;
+ if (!st || !ui || st.kind !== "video") return;
+ if (st.sharing) {
+  const screen = st.screenTrack, camera = st.cameraTrack;
+  st.sharing = false; st.screenTrack = null; st.cameraTrack = null;
+  if (screen) screen.onended = null;
+  for (const p of st.peers.values()) {
+   const sender = p.pc.getSenders().find(x => x.track && x.track.kind === "video");
+   if (sender && camera) await sender.replaceTrack(camera).catch(() => {});
+  }
+  if (screen) { st.local.removeTrack(screen); screen.stop(); }
+  if (camera && camera.readyState === "live") st.local.addTrack(camera);
+  renderSelf(); updateUI();
+  return;
+ }
+ if (!navigator.mediaDevices || typeof navigator.mediaDevices.getDisplayMedia !== "function") {
+  R().E(t("Screen sharing is not supported in this app version. Use RedApp in a supported browser, or update the Android app."));
+  return;
+ }
+ try {
+  const display = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 15, max: 30 } }, audio: false });
+  const screen = display.getVideoTracks()[0];
+  if (!screen || call !== st) { display.getTracks().forEach(x => x.stop()); return; }
+  const camera = st.local.getVideoTracks()[0] || null;
+  for (const p of st.peers.values()) {
+   const sender = p.pc.getSenders().find(x => x.track && x.track.kind === "video");
+   if (sender) await sender.replaceTrack(screen);
+  }
+  if (camera) st.local.removeTrack(camera);
+  st.local.addTrack(screen);
+  st.cameraTrack = camera; st.screenTrack = screen; st.sharing = true;
+  screen.onended = () => { if (call === st && st.sharing) toggleScreenShare(); };
+  renderSelf(); updateUI();
+ } catch (e) {
+  if (e && e.name !== "NotAllowedError" && e.name !== "AbortError") R().E(t("Could not start screen sharing."));
+ }
 }
 function toggleCam() {
  const st = call; if (!st || !st.local) return;
@@ -943,14 +982,15 @@ function buildUI() {
  const bMic = el("button", { class: "gbtn", onclick: toggleMic });
  const bCam = el("button", { class: "gbtn", onclick: toggleCam });
  const bFlip = el("button", { class: "gbtn", onclick: flipCam, html: IC.flip + "<small>" + t("Flip") + "</small>" });
+ const bShare = el("button", { class: "gbtn", onclick: toggleScreenShare, html: "▣<small>" + t("Share") + "</small>" });
  const bEnd = el("button", { class: "gbtn gend", onclick: leave, html: IC.end + "<small>" + t("Leave") + "</small>" });
  ui = el("div", { class: "gcall", role: "dialog", "aria-label": st.c.title, "data-notr": "1" },
   el("div", { class: "gtop" },
    el("button", { class: "gmin", "aria-label": t("Minimize"), onclick: minimize, html: IC.down }),
    el("div", { class: "gttl" }, ttl, status), cnt),
   grid,
-  el("div", { class: "gbar" }, bMic, bCam, bFlip, bEnd));
- ui._ = { status, cnt, grid, bMic, bCam, bFlip };
+  el("div", { class: "gbar" }, bMic, bCam, bFlip, bShare, bEnd));
+ ui._ = { status, cnt, grid, bMic, bCam, bFlip, bShare };
  document.body.append(ui);
 }
 function renderSelf() {
@@ -1009,6 +1049,9 @@ function updateUI() {
  ui._.bCam.classList.toggle("off", st.camOff);
  ui._.bCam.hidden = st.kind !== "video";
  ui._.bFlip.hidden = st.kind !== "video";
+ ui._.bShare.hidden = st.kind !== "video";
+ ui._.bShare.innerHTML = (st.sharing ? "■" : "▣") + "<small>" + t(st.sharing ? "Stop" : "Share") + "</small>";
+ ui._.bShare.classList.toggle("off", st.sharing);
  st.peers.forEach(paintPeer);
  renderSelf();
  if (pill) pill.querySelector("span").textContent = st.c.title + " · " + (st.peers.size ? fmtDur(secs) : "…") + " · " + t("Tap to return");
