@@ -1247,4 +1247,47 @@ if (document.readyState === "loading") document.addEventListener("DOMContentLoad
 window.__grp = { meta, tag, rx, out, call: startCall, headBtn, sub, note, invite, info, newGroup, t, get active() { return active; }, get cur() { return call; } };
 })();
 </script>
+
+<style id="redapp-multi-accounts-v1">
+#raAccountsBtn{border:0;background:transparent;color:var(--muted);font-size:20px;width:38px;height:38px;border-radius:50%;display:grid;place-items:center}
+#raAccountsBtn:active{background:var(--soft)}
+#raAccountsOverlay{position:fixed;inset:0;z-index:9999;background:rgba(5,10,28,.58);display:flex;align-items:center;justify-content:center;padding:18px}
+#raAccountsPanel{width:min(420px,100%);max-height:min(78vh,680px);overflow:auto;background:var(--panel,#fff);color:var(--ink,#17213b);border:1px solid var(--line,#ddd);border-radius:22px;padding:18px;box-shadow:0 18px 60px #0005}
+#raAccountsPanel h2{font-size:19px;margin:0 0 5px}
+#raAccountsPanel .raSub{font-size:13px;color:var(--muted);margin:0 0 14px}
+#raAccountsPanel .raItem{display:flex;align-items:center;gap:11px;padding:11px 9px;border:1px solid var(--line);border-radius:14px;margin:8px 0}
+#raAccountsPanel .raAvatar{width:42px;height:42px;flex:none;border-radius:50%;display:grid;place-items:center;background:var(--soft,#eef1f8);font-weight:700}
+#raAccountsPanel .raMeta{min-width:0;flex:1}
+#raAccountsPanel .raMeta b,#raAccountsPanel .raMeta small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#raAccountsPanel .raMeta small{color:var(--muted);margin-top:3px}
+#raAccountsPanel button{font:inherit;cursor:pointer}
+#raAccountsPanel .raAction{border:0;border-radius:12px;padding:10px 13px;background:var(--accent,#3155c9);color:white}
+#raAccountsPanel .raGhost{border:1px solid var(--line);border-radius:12px;padding:9px 12px;background:transparent;color:inherit}
+#raAccountsPanel .raFoot{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap}
+</style>
+<script id="redapp-multi-accounts-v1">
+(()=>{"use strict";
+const DB="redapp-multi-accounts", STORE="profiles", ACTIVE="redapp.profile.active";
+const $=s=>document.querySelector(s);
+const openDB=()=>new Promise((resolve,reject)=>{const q=indexedDB.open(DB,1);q.onupgradeneeded=()=>{if(!q.result.objectStoreNames.contains(STORE))q.result.createObjectStore(STORE,{keyPath:"id"});};q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});
+const transact=async(mode,fn)=>{const db=await openDB();return new Promise((resolve,reject)=>{const tx=db.transaction(STORE,mode),st=tx.objectStore(STORE);let result;try{result=fn(st);}catch(e){reject(e);return;}tx.oncomplete=()=>{db.close();resolve(result&&result.result);};tx.onerror=()=>{db.close();reject(tx.error);};});};
+const all=()=>transact("readonly",s=>s.getAll());
+const put=v=>transact("readwrite",s=>s.put(v));
+const get=id=>transact("readonly",s=>s.get(id));
+const snap=()=>{const a=[];for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k&&k!==ACTIVE)a.push([k,localStorage.getItem(k)]);}return a;};
+const saveCurrent=async()=>{const id=localStorage.getItem(ACTIVE);if(!id)return;const rec=await get(id);if(rec){rec.data=snap();rec.updated=Date.now();await put(rec);}};
+const restore=async rec=>{localStorage.clear();for(const [k,v] of (rec.data||[]))localStorage.setItem(k,v);localStorage.setItem(ACTIVE,rec.id);location.reload();};
+const ensure=async()=>{let id=localStorage.getItem(ACTIVE),rec=id?await get(id):null;if(!rec){id=id||("ra_"+Math.random().toString(36).slice(2,11));rec={id,name:localStorage.getItem("hop.name")||"My account",phone:localStorage.getItem("hop.phone")||"",data:snap(),created:Date.now(),updated:Date.now()};await put(rec);localStorage.setItem(ACTIVE,id);}return rec;};
+const overlay=()=>$("#raAccountsOverlay")?.remove();
+const show=async()=>{try{await ensure();const items=await all();const active=localStorage.getItem(ACTIVE);overlay();const ov=document.createElement("div");ov.id="raAccountsOverlay";ov.addEventListener("click",e=>{if(e.target===ov)overlay();});const panel=document.createElement("section");panel.id="raAccountsPanel";panel.setAttribute("role","dialog");panel.setAttribute("aria-modal","true");panel.setAttribute("aria-label","Accounts");
+const title=document.createElement("h2");title.textContent="Accounts";const sub=document.createElement("p");sub.className="raSub";sub.textContent="Switch between separate RedApp profiles on this device.";panel.append(title,sub);
+for(const item of items.sort((a,b)=>(b.updated||0)-(a.updated||0))){const row=document.createElement("div");row.className="raItem";const av=document.createElement("div");av.className="raAvatar";av.textContent=(item.name||"R").trim().charAt(0).toUpperCase();const meta=document.createElement("div");meta.className="raMeta";const nm=document.createElement("b");nm.textContent=item.name||"Account";const ph=document.createElement("small");ph.textContent=item.phone||"No phone number added";meta.append(nm,ph);row.append(av,meta);if(item.id===active){const current=document.createElement("small");current.textContent="Active";current.style.color="var(--accent,#3155c9)";row.append(current);}else{const sw=document.createElement("button");sw.className="raGhost";sw.textContent="Switch";sw.addEventListener("click",async()=>{sw.disabled=true;await saveCurrent();const target=await get(item.id);if(target)await restore(target);});row.append(sw);}panel.append(row);}
+const foot=document.createElement("div");foot.className="raFoot";const close=document.createElement("button");close.className="raGhost";close.textContent="Close";close.onclick=overlay;const add=document.createElement("button");add.className="raAction";add.textContent="＋ Add account";add.onclick=async()=>{const name=prompt("Name for the new account:");if(name===null)return;if(!name.trim()){alert("Enter an account name.");return;}const phone=prompt("Phone number (optional):")||"";await saveCurrent();const id="ra_"+Math.random().toString(36).slice(2,11);const data=[["hop.name",JSON.stringify(name.trim().slice(0,40))],["hop.phone",JSON.stringify(phone.trim().slice(0,24))]];const rec={id,name:name.trim().slice(0,40),phone:phone.trim().slice(0,24),data,created:Date.now(),updated:Date.now()};await put(rec);await restore(rec);};foot.append(close,add);panel.append(foot);ov.append(panel);document.body.append(ov);
+}catch(e){alert("Could not open account manager. Please check that storage is available in this browser.");}};
+const install=()=>{const me=$("#meBtn"),tr=me?.parentElement;if(!tr||$("#raAccountsBtn"))return;const b=document.createElement("button");b.id="raAccountsBtn";b.type="button";b.title="Switch accounts";b.setAttribute("aria-label","Switch accounts");b.textContent="⇄";b.addEventListener("click",show);me.insertAdjacentElement("beforebegin",b);};
+if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",install);else install();
+new MutationObserver(install).observe(document.documentElement,{childList:true,subtree:true});
+})();
+</script>
+
 </body> </html>
