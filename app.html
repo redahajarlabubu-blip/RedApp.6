@@ -667,14 +667,14 @@ function requestSync(c) {
  const real = c.msgs.filter(m => !m.sys);
  const last = real.length ? real[real.length - 1].ts : 0;
  const since = last ? last - 36e5 : Date.now() - 7 * 864e5;
- send(c, { t: "gsq", rid: r.I(), since, have: real.slice(-120).map(m => String(m.id).slice(0, 6)) });
+ send(c, { t: "gsq", rid: r.I(), since, have: real.slice(-120).map(m => String(m.id)) });
 }
 function onSyncReq(c, o) {
  if (!c.grp || !o.rid) return;
  const r = R();
- const have = new Set(Array.isArray(o.have) ? o.have.slice(0, 200).map(String) : []);
+ const have = new Set(Array.isArray(o.have) ? o.have.slice(0, 200).map(x => String(x).slice(0, 40)) : []);
  const since = +o.since || 0;
- const list = c.msgs.filter(m => !m.sys && !m.del && m.ts > since && (!m.k || m.k === "text" || m.k === "link") && !have.has(String(m.id).slice(0, 6))).slice(-60);
+ const list = c.msgs.filter(m => !m.sys && !m.del && m.ts > since && (!m.k || m.k === "text" || m.k === "link") && !have.has(String(m.id))).slice(-60);
  const res = [];
  let size = 0;
  for (let i = list.length - 1; i >= 0; i--) {
